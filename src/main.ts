@@ -1,4 +1,4 @@
-import { parseExpression, parse } from '@babel/parser';
+import { parseExpression, parse, ParseResult } from '@babel/parser';
 // const { parseExpression, parse } = require('@babel/parser');
 import traverse from '@babel/traverse';
 // const traverse = require('@babel/traverse').default;
@@ -7,43 +7,104 @@ import generate from '@babel/generator';
 import { types as t } from '@babel/core';
 // const t = require('@babel/types');
 
+type VariableValue = string | number | MyObject;
+type LocalScope = Map<string, VariableValue>;
+type MyObject = Map<string, VariableValue>;
+
+class Scope {
+  stack: LocalScope[];
+  constructor(scopeStack: LocalScope[]) {
+    this.stack = scopeStack;
+  }
+
+  extend(localScope: LocalScope) {
+    return new Scope([...this.stack, localScope]);
+  }
+
+  has(name: string): boolean {
+    return this.stack.some((scope) => scope.has(name));
+  }
+
+  get(name: string): VariableValue | undefined {
+    const scope = this.stack
+      .concat()
+      .reverse()
+      .find((scope) => scope.has(name));
+    if (scope) {
+      return scope.get(name);
+    } else {
+      throw new Error(`unknown variable name: ${name}`);
+    }
+  }
+
+  set(name: string, value: VariableValue): void {
+    this.stack[this.stack.length - 1].set(name, value);
+  }
+}
+
+const executeStatement = (
+  statement: t.Statement | t.Expression,
+  scope: Scope
+): VariableValue | undefined => {
+  switch (statement.type) {
+    case 'Identifier':
+      return statement.name;
+    case 'ExpressionStatement':
+      executeStatement(statement.expression, scope);
+      break;
+    case 'ArrowFunctionExpression':
+      executeStatement(statement.body, scope);
+      break;
+    case 'BlockStatement':
+      statement.body.forEach((node) => executeStatement(node, scope));
+      break;
+    case 'VariableDeclaration':
+      console.log('statement', statement);
+      break;
+    case 'BlockStatement':
+      console.log('statement', statement);
+      break;
+    case 'MemberExpression':
+      // console.log('statement', statement);
+      const objectName = executeStatement(statement.object, scope);
+      if (!objectName) throw new Error('no object name');
+      if (typeof objectName !== 'string')
+        throw new Error(
+          'object name should be a string, got ' + typeof objectName
+        );
+      const object = scope.get(objectName);
+      if (!object) throw new Error('no object found in scope');
+      if (typeof object !== 'object')
+        throw new Error('member is expression is called not on object');
+      if (!object[objectName]) throw new Error('no such property in object');
+      return object[objectName];
+    default:
+      console.log('Unknown expression type', statement.type);
+  }
+};
+
+const executeAst = (ast: ParseResult<t.File>) => {
+  if (ast.type !== 'File') {
+    console.log('ast should be a File');
+  }
+
+  const globalScope = new Map();
+
+  globalScope.set('console', {});
+
+  ast.program.body.forEach((expr) =>
+    executeStatement(expr, new Scope([globalScope]))
+  );
+};
+
 const runFunction = (fn: () => void) => {
-  const fnText = fn.toString();
-  const ast = parse(fn.toString());
-  // const fnBody = ast.program.body[0].expression.body.body;
-  const fnBody = ast.program.body[0];
-  // console.log('fnBody', fnBody);
-  // console.log(Object.keys(fnBody));
-  // // console.log('ast', fnBody[0]);
-  traverse(ast, {
-    AssignmentExpression(path) {
-      console.log('path', path.node);
-      // if (path.node.name === 'a') {
-      //   path.node.name = 'aVar';
-      // }
-    },
-    //   VariableDeclaration(path) {
-    //     path.insertBefore(
-    //       t.expressionStatement(
-    //         t.stringLiteral("Because I'm easy come, easy go.")
-    //       )
-    //     );
-    //     path.insertAfter(
-    //       t.expressionStatement(t.stringLiteral('A little high, little low.'))
-    //     );
-    //   },
-  });
-  const transformedCode = generate(ast).code;
-  console.log(transformedCode);
+  const code = fn.toString().split('\n').slice(1, -1).join('\n');
+  const ast = parse(code);
+  executeAst(ast);
 };
 
 console.log(
   runFunction(() => {
-    const c = 1;
-    // eslint-disable-next-line
-    // @ts-ignore
-    a = b = c;
+    console.log;
   })
 );
-
-// console.log(Object.keys(t).join('\n'));
