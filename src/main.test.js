@@ -1,5 +1,5 @@
 import { test, expect, vi } from 'vitest';
-import { executeExpression, Scope, execute } from './main';
+import { executeExpression, Scope, execute, measure } from './main';
 
 import * as babel from '@babel/parser';
 const { parseExpression } = babel;
@@ -106,6 +106,21 @@ test('forStatement', () => {
   logs = '';
 });
 
+test('while', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
+  const scope = new Scope();
+  scope.set('console', { log });
+
+  execute('let i = 0; while (i < 5) { console.log(i); i++ }', scope);
+  expect(logs).toEqual('01234');
+  logs = '';
+
+  execute('let i = 0; do { console.log(i); i++ } while (i < 5)', scope);
+  expect(logs).toEqual('01234');
+  logs = '';
+});
+
 test('functions', () => {
   let logs = '';
   const log = vi.fn((...args) => (logs += args.join('')));
@@ -125,4 +140,55 @@ test('functions', () => {
   execute('console.log(String(foo(6)))', scope);
   expect(logs).toBe('more: 6');
   logs = '';
+});
+
+test('test', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
+  const scope = new Scope();
+  scope.set('console', { log });
+
+  execute('(() => console.log(24))()', scope);
+  expect(logs).toBe('24');
+  logs = '';
+
+  execute(
+    'const foo = (a) => {console.log("res:" + a)}; console.log(foo(123))',
+    scope
+  );
+  expect(logs).toBe('res:123');
+  logs = '';
+});
+
+test('measure', () => {
+  const res = measure(
+    (a, b) => {
+      const temp = 21;
+      for (let i = 0; i < 10; i++) {
+        if (i >= 5) {
+          temp = a + b;
+        }
+      }
+      let j = 0;
+      while (j < 10) {
+        j++;
+      }
+      do {
+        j--;
+      } while (j > 0);
+    },
+    [1, 'test']
+  );
+  expect(res.totalStatements).toBe(188);
+});
+
+test('ObjectExpression', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
+  const scope = new Scope();
+  scope.set('console', { log });
+  scope.set('JSON', { stringify: JSON.stringify });
+
+  execute('const a = { b: 1, c: 2 }; console.log(JSON.stringify(a))', scope);
+  expect(logs).toBe('{"b":1,"c":2}');
 });
