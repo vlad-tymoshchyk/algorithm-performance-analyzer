@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { parseExpression, parse, ParseResult } from '@babel/parser';
 import esMain from 'es-main';
 // const { parseExpression, parse } = require('@babel/parser');
@@ -50,26 +52,148 @@ export class Scope {
   }
 }
 
+export type StatementReturnCode = 0 | 'break' | 'continue' | 'return';
+
+export const execute = (code: string, scope: Scope = new Scope()) => {
+  const ast = parse(code);
+  ast.program.body.forEach((statement) => {
+    const returnCode = executeStatement(statement, scope);
+    if (returnCode !== 0) {
+      throw new Error('unexpected return code: ' + returnCode);
+    }
+  });
+};
+
+export const executeStatement = (
+  statement: t.Statement,
+  scope: Scope
+): StatementReturnCode => {
+  switch (statement.type) {
+    case 'IfStatement':
+      const test = executeExpression(statement.test as t.Expression, scope);
+      if (test) {
+        return executeStatement(statement.consequent, scope);
+      } else {
+        if (statement.alternate) {
+          return executeStatement(statement.alternate, scope);
+        }
+      }
+    case 'EmptyStatement':
+      break;
+    case 'FunctionDeclaration':
+      const id = statement.id.name;
+      const body = statement.body.body;
+
+      const fn = (...args: any[]) => {
+        const localScope = scope.extend();
+        statement.params.forEach((param, idx) => {
+          localScope.set((param as t.Identifier).name, args[idx]);
+        });
+        for (let i = 0; i < body.length; i++) {
+          const curStatement = body[i];
+          if (curStatement.type === 'ReturnStatement') {
+            return executeExpression(
+              curStatement.argument as t.Expression,
+              localScope
+            );
+          }
+          executeStatement(body[i], localScope);
+        }
+      };
+      Object.defineProperty(fn, 'name', { value: id, writable: false });
+
+      scope.set(id, fn);
+      break;
+    case 'ForStatement': {
+      const init = statement.init;
+      const test = statement.test;
+      const update = statement.update;
+      const body = statement.body;
+      if (init.type !== 'VariableDeclaration') {
+        throw new Error('init should be a variable declaration');
+      }
+      if (init.declarations.length !== 1) {
+        throw new Error('init should have only one declaration');
+      }
+      if (test.type !== 'BinaryExpression') {
+        throw new Error('test should be a binary expression');
+      }
+      if (body.type !== 'BlockStatement') {
+        throw new Error('body should be a block statement');
+      }
+      const localScope = scope.extend();
+      for (
+        localScope.set(
+          (init.declarations[0].id as t.Identifier).name,
+          executeExpression(
+            init.declarations[0].init as t.Expression,
+            localScope
+          )
+        );
+        executeExpression(test, localScope);
+        executeExpression(update, localScope)
+      ) {
+        const returnCode = executeStatement(body, localScope);
+        if (returnCode === 'break') {
+          break;
+        } else if (returnCode === 'continue') {
+          continue;
+        }
+      }
+      return 0;
+    }
+    case 'ExpressionStatement':
+      executeExpression(statement.expression, scope);
+      return 0;
+    case 'BlockStatement':
+      for (let i = 0; i < statement.body.length; i++) {
+        const returnCode = executeStatement(statement.body[i], scope);
+        if (returnCode !== 0) {
+          return returnCode;
+        }
+      }
+      return 0;
+    case 'VariableDeclaration':
+      statement.declarations.forEach((declaration) => {
+        scope.set(
+          (declaration.id as t.Identifier).name,
+          executeExpression(declaration.init)
+        );
+      });
+      break;
+    case 'BreakStatement':
+      return 'break';
+    case 'ContinueStatement':
+      return 'continue';
+    case 'ReturnStatement':
+      break;
+    default:
+      throw new Error('Unknown statement type: ' + statement.type);
+  }
+  return 0;
+};
+
 export const executeExpression = (
-  statement: t.Statement | t.Expression,
+  statement: t.Expression,
   scope: Scope = new Scope()
-  // scope: Scope
 ): VariableValue | undefined => {
-  // console.log('statement', statement.type);
+  let code = 0;
   switch (statement.type) {
     case 'Identifier':
       if (!scope.has(statement.name)) {
+        printErrorCode(statement.loc);
         throw new Error('variable not found: ' + statement.name);
       }
       return scope.get(statement.name);
-    case 'ExpressionStatement':
-      return executeExpression(statement.expression, scope);
     case 'NumericLiteral':
       return statement.value;
     case 'StringLiteral':
       return statement.value;
     case 'BooleanLiteral':
       return statement.value;
+    // case 'ArrowFunctionExpression':
+    //   executeExpression(statement.body, scope);
+    //   break;
     case 'CallExpression':
       const callee = executeExpression(statement.callee as t.Expression, scope);
       if (!callee) throw new Error('no callee');
@@ -79,24 +203,49 @@ export const executeExpression = (
         executeExpression(arg as t.Expression, scope)
       );
       return callee(...args);
-    case 'ArrowFunctionExpression':
-      executeExpression(statement.body, scope);
+    case 'AssignmentExpression':
+      const left = statement.left as t.Identifier;
+      const right = statement.right;
+      switch (statement.operator) {
+        case '=':
+          scope.set(left.name, executeExpression(right, scope));
+          break;
+        case '+=':
+          scope.set(left.name, scope.get(left.name) + executeExpression(right));
+          break;
+        case '-=':
+          scope.set(left.name, scope.get(left.name) - executeExpression(right));
+          break;
+        case '*=':
+          scope.set(left.name, scope.get(left.name) * executeExpression(right));
+          break;
+        case '/=':
+          scope.set(left.name, scope.get(left.name) / executeExpression(right));
+          break;
+        default:
+          throw new Error(
+            'Unknown AssignmentExpression operator: ' + statement.operator
+          );
+      }
       break;
-    case 'BlockStatement':
-      statement.body.forEach((node) => executeExpression(node, scope));
-      break;
-    case 'VariableDeclaration':
-      statement.declarations.forEach((declaration) => {
-        scope.set(
-          (declaration.id as t.Identifier).name,
-          executeExpression(declaration.init)
-        );
-      });
-      break;
-    case 'BlockStatement':
+    case 'UpdateExpression':
+      const updateVariable = statement.argument as t.Identifier;
+      switch (statement.operator) {
+        case '++':
+          scope.set(updateVariable.name, scope.get(updateVariable.name) + 1);
+          break;
+        case '--':
+          scope.set(updateVariable.name, scope.get(updateVariable.name) - 1);
+          break;
+        default:
+          throw new Error('Unknown UpdateExpression operator: ', statement);
+      }
       break;
     case 'MemberExpression':
-      const objectName = (statement.object as t.Identifier).name;
+      if (statement.object.type !== 'Identifier') {
+        throw new Error('object should be an identifier');
+      }
+      const objectName = statement.object.name;
       if (!objectName) throw new Error('no object name');
       if (typeof objectName !== 'string')
         throw new Error(
@@ -108,45 +257,15 @@ export const executeExpression = (
         throw new Error('memberexpression object is not an object: ' + object);
 
       const property = statement.computed
-        ? executeExpression(statement.property as t.Expression)
+        ? executeExpression(statement.property as t.Expression, scope)
         : (statement.property as t.Identifier).name;
-      // console.log('property', property);
-      if (!property) throw new Error('no property defined');
-      if (typeof property !== 'string')
-        throw new Error('property should be a string: ' + property);
-      if (!object[property])
-        throw new Error('no such property on the object: ' + property);
+      if (property === undefined || property === null)
+        throw new Error('no property defined');
       return object[property];
-    case 'EmptyStatement':
-      break;
-    case 'FunctionDeclaration':
-      const id = statement.id.name;
-      const body = statement.body.body;
-      // console.log('body', body);
-
-      const fn = (...args: any[]) => {
-        // console.log('execute function', args);
-        const localScope = scope.extend();
-        statement.params.forEach((param, idx) => {
-          localScope.set((param as t.Identifier).name, args[idx]);
-        });
-        for (let i = 0; i < body.length; i++) {
-          const curStatement = body[i];
-          if (curStatement.type === 'ReturnStatement') {
-            // console.log('curStatement', curStatement);
-            return executeExpression(
-              curStatement.argument as t.Expression,
-              localScope
-            );
-          }
-          executeExpression(body[i], localScope);
-        }
-      };
-      Object.defineProperty(fn, 'name', { value: id, writable: false });
-
-      scope.set(id, fn);
-      // console.log('statement', statement);
-      break;
+    case 'ArrayExpression':
+      return statement.elements.map((element) =>
+        executeExpression(element as t.Expression, scope)
+      );
     case 'BinaryExpression':
       switch (statement.operator) {
         case '+':
@@ -154,14 +273,62 @@ export const executeExpression = (
             executeExpression(statement.left as t.Expression, scope) +
             executeExpression(statement.right, scope)
           );
+        case '-':
+          return (
+            executeExpression(statement.left as t.Expression, scope) -
+            executeExpression(statement.right, scope)
+          );
+        case '*':
+          return (
+            executeExpression(statement.left as t.Expression, scope) *
+            executeExpression(statement.right, scope)
+          );
+        case '/':
+          return (
+            executeExpression(statement.left as t.Expression, scope) /
+            executeExpression(statement.right, scope)
+          );
+        case '<':
+          return (
+            executeExpression(statement.left as t.Expression, scope) <
+            executeExpression(statement.right, scope)
+          );
+        case '<=':
+          return (
+            executeExpression(statement.left as t.Expression, scope) <=
+            executeExpression(statement.right, scope)
+          );
+        case '>':
+          return (
+            executeExpression(statement.left as t.Expression, scope) >
+            executeExpression(statement.right, scope)
+          );
+        case '>=':
+          return (
+            executeExpression(statement.left as t.Expression, scope) >=
+            executeExpression(statement.right, scope)
+          );
+        case '===':
+          return (
+            executeExpression(statement.left as t.Expression, scope) ===
+            executeExpression(statement.right, scope)
+          );
+        case '!==':
+          return (
+            executeExpression(statement.left as t.Expression, scope) !==
+            executeExpression(statement.right, scope)
+          );
+        default:
+          throw new Error(
+            'Unknown BinaryExpression operator: ' + statement.operator
+          );
       }
-    case 'ReturnStatement':
-      // console.log('return');
-      break;
     default:
       console.log('statement', statement);
       throw new Error('Unknown expression type: ' + statement.type);
   }
+
+  return code;
 };
 
 const executeAst = (ast: ParseResult<t.File>) => {
@@ -173,30 +340,44 @@ const executeAst = (ast: ParseResult<t.File>) => {
 
   globalScope.set('console', {
     log(...args: any[]) {
-      console.log('log:', ...args);
+      console.log('[log]', ...args);
     },
   });
 
+  // search for function declarations
   ast.program.body.forEach((expr) => {
-    executeExpression(expr, globalScope);
+    if (expr.type !== 'FunctionDeclaration') return;
+    executeStatement(expr, globalScope);
+  });
+
+  ast.program.body.forEach((expr) => {
+    if (expr.type === 'FunctionDeclaration') return;
+    executeStatement(expr, globalScope);
   });
 };
 
-const runFunction = (fn: () => void) => {
-  const code = fn.toString().split('\n').slice(1, -1).join('\n');
-  const ast = parse(code);
-  executeAst(ast);
-};
+let globalCode = '';
+function printErrorCode(loc: t.SourceLocation) {
+  if (!globalCode) {
+    throw new Error('no code provided');
+  }
+  const startLine = loc.start.line;
+  console.log('error at line:', startLine, 'column:', loc.start.column);
+  console.log('--- Error: ------------------');
+  console.log(
+    globalCode
+      .split('\n')
+      .map((line, idx) => `${startLine + idx + 1} ${line}`)
+      .slice(loc.start.line - 2, loc.end.line + 1)
+      .join('\n')
+  );
+  console.log('-----------------------------');
+}
 
 const runCode = (code: string) => {
+  globalCode = code;
   executeAst(parse(code));
 };
-
-// console.log(
-//   runFunction(() => {
-//     console.log;
-//   })
-// );
 
 const exampleProgram = `
 console.log('starts here');
@@ -229,8 +410,17 @@ console.log(bubleSort(testArr));
 // eslint-disable-next-line
 // @ts-ignore
 if (esMain(import.meta)) {
-  // runCode(exampleProgram);
-  runCode(
-    'function foo(text) { return text }; console.log(foo("some" + "there"))'
-  );
+  if (process.argv.length > 2) {
+    const filename = path.resolve(process.argv[2]);
+    runCode(fs.readFileSync(filename, 'utf-8'));
+  } else {
+    runCode(exampleProgram);
+    runCode(`
+    for (let i = 0; i < 3; i+=1) {
+      for (let j = 0; j < 3; j+=1) {
+        console.log("i:", i, j);
+      }
+    }
+  `);
+  }
 }

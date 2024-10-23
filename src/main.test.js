@@ -1,6 +1,6 @@
 // import { parseExpression, parse, ParseResult } from '@babel/parser';
 import { describe, test, expect, vi } from 'vitest';
-import { runFunction, executeExpression, Scope } from './main';
+import { runFunction, executeExpression, Scope, execute } from './main';
 
 import * as babel from '@babel/parser';
 const { parseExpression, parse, ParseResult } = babel;
@@ -26,23 +26,88 @@ test('handle number/string/boolean literals', () => {
 
 test('log text', () => {
   const log = vi.fn();
-  const scope = new Map();
+  const scope = new Scope();
   scope.set('console', { log });
-  expect(
-    executeExpression(ps('console.log("test text")'), new Scope().extend(scope))
-  ).toBe(undefined);
+  expect(execute('console.log("test text")', new Scope().extend(scope))).toBe(
+    undefined
+  );
   expect(log).toHaveBeenCalledTimes(1);
   expect(log).toHaveBeenNthCalledWith(1, 'test text');
 });
 
-test('can declare variables', () => {
+test('declare variables / arrays / access arrays', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
   const scope = new Scope();
-  executeExpression(ps('const name = "test-name"'), scope);
-  expect(scope.has('name')).toBe(true);
+  scope.set('console', { log });
+  execute('const name = "test-name"', scope);
+  execute('console.log(name)', scope);
+  expect(logs).toEqual('test-name');
+  logs = '';
+
+  execute('const arr = [1, 2, 3]', scope);
+  execute('const index = 2', scope);
+  execute('console.log(arr[1], ":", arr[index])', scope);
+  expect(logs).toEqual('2:3');
+  logs = '';
+});
+
+test('ifStatement', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
+  const scope = new Scope();
+  scope.set('console', { log });
+
+  execute('if (5 > 1) { console.log("run consequent") }', scope);
+  expect(logs).toEqual('run consequent');
+  logs = '';
+
+  execute(
+    'if (5 > 1) { console.log("run consequent") } else { console.log("run alternate"); }',
+    scope
+  );
+  expect(logs).toEqual('run consequent');
+  logs = '';
+
+  execute(
+    'if (5 < 1) { console.log("run consequent") } else { console.log("run alternate"); }',
+    scope
+  );
+  expect(logs).toEqual('run alternate');
+  logs = '';
+});
+
+test('forStatement', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
+  const scope = new Scope();
+  scope.set('console', { log });
+
+  execute('for (let i = 0; i < 5; i++) { console.log(i) }', scope);
+  expect(logs).toEqual('01234');
+  logs = '';
+
+  execute('for (let i = 0; i < 5; i++) { console.log(i); break }', scope);
+  expect(logs).toEqual('0');
+  logs = '';
+
+  execute(
+    'for (let i = 0; i < 5; i++) { if (i === 3) { break }; console.log(i) }',
+    scope
+  );
+  expect(logs).toEqual('012');
+  logs = '';
+
+  execute(
+    'for (let i = 3; i <= 5; i++) { if (i === 4) { continue }; console.log(i) }',
+    scope
+  );
+  expect(logs).toBe('35');
+  logs = '';
 });
 
 test('can declare functions', () => {
   const scope = new Scope();
-  executeExpression(ps('function foo(text) { return "text:" + text }'), scope);
-  executeExpression(ps('foo("some info")'), scope);
+  execute('function foo(text) { return "text:" + text }', scope);
+  execute('foo("some info")', scope);
 });
