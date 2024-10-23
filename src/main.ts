@@ -13,6 +13,8 @@ import { types as t } from '@babel/core';
 
 // const esMain = import('es-main');
 
+let globalCode = '';
+
 // eslint-disable-next-line
 // @ts-ignore
 export type VariableValue = string | number | boolean | MyObject | Function;
@@ -52,9 +54,14 @@ export class Scope {
   }
 }
 
-export type StatementReturnCode = 0 | 'break' | 'continue' | 'return';
+export type StatementReturnCode =
+  | 0
+  | 'break'
+  | 'continue'
+  | ['return', VariableValue];
 
 export const execute = (code: string, scope: Scope = new Scope()) => {
+  globalCode = code;
   const ast = parse(code);
   ast.program.body.forEach((statement) => {
     const returnCode = executeStatement(statement, scope);
@@ -90,14 +97,16 @@ export const executeStatement = (
           localScope.set((param as t.Identifier).name, args[idx]);
         });
         for (let i = 0; i < body.length; i++) {
-          const curStatement = body[i];
-          if (curStatement.type === 'ReturnStatement') {
-            return executeExpression(
-              curStatement.argument as t.Expression,
-              localScope
-            );
+          const code = executeStatement(body[i], localScope);
+          if (Array.isArray(code)) {
+            if (code[0] === 'return') {
+              return code[1];
+            } else {
+              throw new Error('Array can be only return statement');
+            }
+          } else if (code !== 0) {
+            throw new Error('Unexpected return code in function: ' + code);
           }
-          executeStatement(body[i], localScope);
         }
       };
       Object.defineProperty(fn, 'name', { value: id, writable: false });
@@ -166,7 +175,7 @@ export const executeStatement = (
     case 'ContinueStatement':
       return 'continue';
     case 'ReturnStatement':
-      break;
+      return ['return', executeExpression(statement.argument, scope)];
     default:
       throw new Error('Unknown statement type: ' + statement.type);
   }
@@ -204,28 +213,46 @@ export const executeExpression = (
       );
       return callee(...args);
     case 'AssignmentExpression':
-      const left = statement.left as t.Identifier;
+      const left = statement.left as t.Identifier | t.MemberExpression;
       const right = statement.right;
-      switch (statement.operator) {
-        case '=':
-          scope.set(left.name, executeExpression(right, scope));
-          break;
-        case '+=':
-          scope.set(left.name, scope.get(left.name) + executeExpression(right));
-          break;
-        case '-=':
-          scope.set(left.name, scope.get(left.name) - executeExpression(right));
-          break;
-        case '*=':
-          scope.set(left.name, scope.get(left.name) * executeExpression(right));
-          break;
-        case '/=':
-          scope.set(left.name, scope.get(left.name) / executeExpression(right));
-          break;
-        default:
-          throw new Error(
-            'Unknown AssignmentExpression operator: ' + statement.operator
-          );
+      if (left.type === 'MemberExpression') {
+        const object = executeExpression(left.object, scope);
+        object[executeExpression(left.property as t.Expression, scope)] =
+          executeExpression(right, scope);
+      } else {
+        switch (statement.operator) {
+          case '=':
+            scope.set(left.name, executeExpression(right, scope));
+            break;
+          case '+=':
+            scope.set(
+              left.name,
+              scope.get(left.name) + executeExpression(right)
+            );
+            break;
+          case '-=':
+            scope.set(
+              left.name,
+              scope.get(left.name) - executeExpression(right)
+            );
+            break;
+          case '*=':
+            scope.set(
+              left.name,
+              scope.get(left.name) * executeExpression(right)
+            );
+            break;
+          case '/=':
+            scope.set(
+              left.name,
+              scope.get(left.name) / executeExpression(right)
+            );
+            break;
+          default:
+            throw new Error(
+              'Unknown AssignmentExpression operator: ' + statement.operator
+            );
+        }
       }
       break;
     case 'UpdateExpression':
@@ -356,7 +383,6 @@ const executeAst = (ast: ParseResult<t.File>) => {
   });
 };
 
-let globalCode = '';
 function printErrorCode(loc: t.SourceLocation) {
   if (!globalCode) {
     throw new Error('no code provided');

@@ -50,6 +50,10 @@ test('declare variables / arrays / access arrays', () => {
   execute('console.log(arr[1], ":", arr[index])', scope);
   expect(logs).toEqual('2:3');
   logs = '';
+
+  execute('const arr = [1, 2, 3]; arr[1] = 9; console.log(arr)', scope);
+  expect(logs).toBe('1,9,3');
+  logs = '';
 });
 
 test('ifStatement', () => {
@@ -106,8 +110,23 @@ test('forStatement', () => {
   logs = '';
 });
 
-test('can declare functions', () => {
+test('functions', () => {
+  let logs = '';
+  const log = vi.fn((...args) => (logs += args.join('')));
   const scope = new Scope();
-  execute('function foo(text) { return "text:" + text }', scope);
-  execute('foo("some info")', scope);
+  scope.set('console', { log });
+  scope.set('String', String);
+
+  execute(
+    'function foo(num) { if (num > 5) { return  "more: " + num  } else { return "less: " + num } }',
+    scope
+  );
+
+  execute('console.log(String(foo(4)))', scope);
+  expect(logs).toBe('less: 4');
+  logs = '';
+
+  execute('console.log(String(foo(6)))', scope);
+  expect(logs).toBe('more: 6');
+  logs = '';
 });
