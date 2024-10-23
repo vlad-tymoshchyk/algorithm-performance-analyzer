@@ -1,17 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { parseExpression, parse, ParseResult } from '@babel/parser';
+import { parse, ParseResult } from '@babel/parser';
 import esMain from 'es-main';
-// const { parseExpression, parse } = require('@babel/parser');
-import traverse from '@babel/traverse';
-// const traverse = require('@babel/traverse').default;
-import generate from '@babel/generator';
-// const generate = require('@babel/generator').default;
 import { types as t } from '@babel/core';
-// const t = require('@babel/types');
-//
-
-// const esMain = import('es-main');
 
 let globalCode = '';
 
@@ -405,48 +396,9 @@ const runCode = (code: string) => {
   executeAst(parse(code));
 };
 
-const exampleProgram = `
-console.log('starts here');
-function bubleSort(arr) {
-  let temp = 0;
-  for (let i = 0; i < arr.length - 1; i++) {
-    for (let j = 0; j < arr.length - 1 - i; j++) {
-      console.log(
-        'j, j + 1',
-        j,
-        j + 1,
-        arr[j] > arr[j + 1],
-        arr[j],
-        arr[j + 1]
-      );
-      if (arr[j] > arr[j + 1]) {
-        temp = arr[j];
-        arr[j] = arr[j + 1];
-        arr[j + 1] = temp;
-      }
-    }
-  }
-  return arr;
-}
-const testArr = [3, 2, 1, 4, 9, 6, 7, 8, 5];
-console.log(testArr);
-console.log(bubleSort(testArr));
-`;
-
 // eslint-disable-next-line
 // @ts-ignore
 if (esMain(import.meta)) {
-  if (process.argv.length > 2) {
-    const filename = path.resolve(process.argv[2]);
-    runCode(fs.readFileSync(filename, 'utf-8'));
-  } else {
-    runCode(exampleProgram);
-    runCode(`
-    for (let i = 0; i < 3; i+=1) {
-      for (let j = 0; j < 3; j+=1) {
-        console.log("i:", i, j);
-      }
-    }
-  `);
-  }
+  const filename = path.resolve(process.argv[2]);
+  runCode(fs.readFileSync(filename, 'utf-8'));
 }

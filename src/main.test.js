@@ -1,15 +1,11 @@
-// import { parseExpression, parse, ParseResult } from '@babel/parser';
-import { describe, test, expect, vi } from 'vitest';
-import { runFunction, executeExpression, Scope, execute } from './main';
+import { test, expect, vi } from 'vitest';
+import { executeExpression, Scope, execute } from './main';
 
 import * as babel from '@babel/parser';
-const { parseExpression, parse, ParseResult } = babel;
+const { parseExpression } = babel;
 
 const p = (code) => {
   return parseExpression(code);
-};
-const ps = (code) => {
-  return parse(code).program.body[0];
 };
 
 test('p function', () => {
